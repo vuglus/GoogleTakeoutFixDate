@@ -1,45 +1,86 @@
-$BasePath = "D:\Photo\GooglePhoto"
-
-# Список расширений фото/видео
-$mediaExtensions = @("jpg","jpeg","png","gif","mp4","mov","avi","heic","webp")
-
-$deletedCount = 0
-
-# Ищем все JSON файлы
-Get-ChildItem -Path $BasePath -Recurse -File -Filter "*.json" | ForEach-Object {
-    $jsonFile = $_.FullName
-
-    # Пропускаем supplemental-metadata
-    if ($jsonFile -match "\.supplemental-metadata") {
-        return
-    }
-
-    # Имя медиафайла = имя json без .json и без возможного (n)
-    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($jsonFile)
-
-    # Удаляем суффикс (2), (3), ...
-    $cleanName = $baseName -replace '\(\d+\)$',''
-
-    # Папка, где лежит json
-    $dir = $_.DirectoryName
-
-    # Ищем медиафайл с таким именем
-    $mediaFound = $false
-    foreach ($ext in $mediaExtensions) {
-        $mediaPath1 = Join-Path $dir "$cleanName.$ext"
-        $mediaPath2 = Join-Path $dir "$cleanName($([regex]::Match($baseName,'\d+').Value)).$ext"
-
-        if (Test-Path $mediaPath1 -PathType Leaf -or Test-Path $mediaPath2 -PathType Leaf) {
-            $mediaFound = $true
-            break
-        }
-    }
-
-    # Если нашли медиа — удаляем json
-    if ($mediaFound) {
-        Remove-Item -Path $jsonFile -Force
-        $deletedCount++
+п»їGet-Content ".\config.env" | ForEach-Object {
+    if ($_ -match "^(.*?)=(.*)$") {
+        Set-Variable -Name $matches[1] -Value $matches[2]
     }
 }
 
-Write-Host "Готово! Удалено $deletedCount JSON-файлов."
+Write-Host "BasePath РёР· .env: $BasePath"
+
+
+# Р¤РѕСЂРјР°С‚С‹ С„РѕС‚Рѕ Рё РІРёРґРµРѕ, СЃ РєРѕС‚РѕСЂС‹РјРё СЂР°Р±РѕС‚Р°РµРј
+$Extensions = @(".jpg", ".jpeg", ".png", ".heic", ".mp4", ".mov", ".avi", ".mkv")
+
+# РЎС‡С‘С‚С‡РёРєРё
+$UpdatedCount = 0
+$TotalJson = 0
+
+Write-Host "=== РќР°С‡Р°Р»Рѕ РѕР±СЂР°Р±РѕС‚РєРё ==="
+
+# РџРѕРёСЃРє РІСЃРµС… JSON РІ РїР°РїРєРµ Рё РїРѕРґРїР°РїРєР°С…
+Get-ChildItem -Path $BasePath -Recurse -Filter *.json | ForEach-Object {
+    $TotalJson++
+    try {
+        $jsonFile = $_.FullName
+
+        # РџСЂРѕРїСѓСЃРєР°РµРј supplemental-metadata
+        if ($jsonFile -match "\.supplemental-metadata") {
+            return
+        }
+        # Р§РёС‚Р°РµРј JSON
+        $jsonText = Get-Content $_.FullName -Raw -Encoding UTF8
+        $data = $jsonText | ConvertFrom-Json
+
+        # Р‘РµСЂС‘Рј timestamp
+        $timestamp = $null
+        if ($data.photoTakenTime.timestamp) {
+            $timestamp = [long]$data.photoTakenTime.timestamp
+        } elseif ($data.creationTime.timestamp) {
+            $timestamp = [long]$data.creationTime.timestamp
+        }
+
+        if (-not $timestamp -or $timestamp -eq 0) {
+            return
+        }
+
+        # РљРѕРЅРІРµСЂС‚Р°С†РёСЏ Unix timestamp РІ РґР°С‚Сѓ
+        $dateTaken = (Get-Date "1970-01-01 00:00:00Z").AddSeconds($timestamp).ToLocalTime()
+
+        # РРјСЏ С„Р°Р№Р»Р° РёР· JSON
+        $fileName = $data.title
+
+        # РџСѓС‚СЊ Рє РјРµРґРёР°С„Р°Р№Р»Сѓ
+        $mediaFile = Join-Path $_.DirectoryName $fileName
+
+        # Р•СЃР»Рё С„Р°Р№Р»Р° СЃ С‚Р°РєРёРј РёРјРµРЅРµРј РЅРµС‚ вЂ” РїСЂРѕР±СѓРµРј СЂР°Р·РЅС‹Рµ СЂР°СЃС€РёСЂРµРЅРёСЏ
+        if (-not (Test-Path $mediaFile)) {
+            foreach ($ext in $Extensions) {
+                $altPath = [System.IO.Path]::ChangeExtension($mediaFile, $ext)
+                if (Test-Path $altPath) {
+                    $mediaFile = $altPath
+                    break
+                }
+            }
+        }
+
+        # Р•СЃР»Рё С„Р°Р№Р» РЅР°Р№РґРµРЅ вЂ” РјРµРЅСЏРµРј РґР°С‚С‹
+        if (Test-Path $mediaFile) {
+            (Get-Item $mediaFile).CreationTime = $dateTaken
+            (Get-Item $mediaFile).LastWriteTime = $dateTaken
+            $UpdatedCount++
+            Write-Host "вњ” $fileName вЂ” РґР°С‚Р° РёР·РјРµРЅРµРЅР° РЅР° $dateTaken"
+            $mediaFound = $true
+        }
+        # Р•СЃР»Рё РЅР°С€Р»Рё РјРµРґРёР° вЂ” СѓРґР°Р»СЏРµРј json
+        if ($mediaFound) {
+            Remove-Item -Path $jsonFile -Force
+            $deletedCount++
+        }
+
+    } catch {
+        Write-Host "РћС€РёР±РєР° РѕР±СЂР°Р±РѕС‚РєРё $($_.FullName): $_" -ForegroundColor Red
+    }
+}
+Write-Host "=== Р“РѕС‚РѕРІРѕ! РЈРґР°Р»РµРЅРѕ $deletedCount JSON-С„Р°Р№Р»РѕРІ."
+Write-Host "=== Р“РѕС‚РѕРІРѕ! РћР±РЅРѕРІР»РµРЅРѕ $UpdatedCount С„Р°Р№Р»РѕРІ РёР· $TotalJson JSON ==="
+
+
